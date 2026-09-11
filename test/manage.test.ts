@@ -7,6 +7,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { derive_shares_secret } from "@vbyte/frost/lib";
 import { HTTP_AUTH_KIND, MANAGEMENT_CONTENT_TYPE } from "../src/nip98.ts";
 import { signEvent } from "../src/nostr.ts";
+import { MANAGEMENT_METHODS } from "../src/signer.ts";
 import { isolateStorage } from "./helpers/isolate.ts";
 import { Peer, claim, fixture, type Fixture } from "./helpers/peer.ts";
 
@@ -52,7 +53,7 @@ describe("management by the group key", () => {
     const peerPk = new Peer(fx.group, fx.shares[1]!, fx.signerPubkey).pubkey;
 
     const methods = await manage(secret, "supportedmethods");
-    expect(methods.result).toEqual(["supportedmethods", "listpeerpolicies", "setpeerpolicy", "removepeerpolicy"]);
+    expect(methods.result).toEqual([...MANAGEMENT_METHODS]);
 
     const set = await manage(secret, "setpeerpolicy", [{ pubkey: peerPk, allowReceive: false, label: "laptop" }]);
     expect(set.status).toBe(200);

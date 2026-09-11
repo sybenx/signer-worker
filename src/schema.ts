@@ -2,7 +2,15 @@
 // schemas (src/schema/*.ts) field for field. No zod here: the Worker
 // carries no schema library, and every message it accepts has a handful
 // of fields whose shapes are fixed by the protocol.
-import { isValidPublicNonce, type DerivedPublicNonce, type MemberPublicNonce, type SighashVector, type SignSessionPackage } from "./frost.ts";
+import {
+  isValidPublicNonce,
+  type DerivedPublicNonce,
+  type ECDHPackage,
+  type MemberPublicNonce,
+  type PartialSigPackage,
+  type SighashVector,
+  type SignSessionPackage,
+} from "./frost.ts";
 
 const HEX_RE = /^[0-9a-fA-F]*$/;
 function isHex(v: unknown, bytes?: number): v is string {
@@ -148,4 +156,41 @@ export function parseOnboardRequest(param: string | undefined): OnboardRequest |
   if (!isHex(o.share_pk) || (o.share_pk.length !== 64 && o.share_pk.length !== 66)) return null;
   if (!isUint(o.idx)) return null;
   return { sharePk: o.share_pk, idx: o.idx };
+}
+
+// --- Responses this Worker receives when it is the requester -----------------
+
+// schema/sign.ts psig_pkg.
+export function parsePsigPackage(raw: unknown): PartialSigPackage | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const p = raw as Record<string, unknown>;
+  if (!isUint(p.idx) || !isHex(p.pubkey, 33) || !isHex(p.sid, 32)) return null;
+  if (!Array.isArray(p.psigs) || !p.psigs.every((e) => Array.isArray(e) && e.length === 2 && isHex(e[0], 32) && isHex(e[1], 32))) return null;
+  const out: PartialSigPackage = { idx: p.idx, psigs: p.psigs as [string, string][], pubkey: p.pubkey, sid: p.sid };
+  if (p.nonce_code !== undefined) {
+    if (!isHex(p.nonce_code, 32)) return null;
+    out.nonce_code = p.nonce_code;
+  }
+  if (p.replenish !== undefined) {
+    if (!Array.isArray(p.replenish) || !p.replenish.every(isValidPublicNonce)) return null;
+    out.replenish = p.replenish as DerivedPublicNonce[];
+  }
+  return out;
+}
+
+// schema/package.ts ecdh, as a response.
+export function parseEcdhPackage(raw: unknown): ECDHPackage | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const e = raw as Record<string, unknown>;
+  if (!isUint(e.idx)) return null;
+  if (!Array.isArray(e.members) || !e.members.every(isUint)) return null;
+  if (!Array.isArray(e.entries) || e.entries.length === 0 || e.entries.length > MAX_ECDH_BATCH) return null;
+  const entries: ECDHPackage["entries"] = [];
+  for (const entry of e.entries) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { ecdh_pk, keyshare } = entry as Record<string, unknown>;
+    if (!isHex(ecdh_pk) || !isHex(keyshare, 33)) return null;
+    entries.push({ ecdh_pk, keyshare });
+  }
+  return { idx: e.idx, members: e.members as number[], entries };
 }

@@ -1,6 +1,6 @@
 {
   "name": "signer-worker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "One FROSTR share, held by a Cloudflare Worker on the free tier and deployed in one click.",

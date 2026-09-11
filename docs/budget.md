@@ -150,6 +150,12 @@ relays:
 - A peer's `last_seen` is refreshed at most once in five minutes, so a
   peer pinging every second costs 288 rows a day, not 86,400.
 
+A bunker round (a NIP-46 `sign_event` or encrypt) writes one `pending` row
+when it opens, one update per part that arrives before the last, one
+delete when it closes, one `bunker` update for the page's record, and one
+nonce spend per peer asked: for a 2-of-3 group, **about 5 rows per app
+request**, and an alarm write when the round is the first in flight.
+
 The claim writes a handful of rows once. Peer policy changes write one row
 each, by a NIP-98-signed management call, so they are the group's to
 spend. The per-IP and per-peer rate limits are in memory, never in SQLite,

@@ -6133,7 +6133,18 @@
     return bytesToHex(randomBytes(32));
   }
 
+  // src/nip46.ts
+  function bunkerUrl(bunkerPubkey, relayUrl2, secret) {
+    const params = new URLSearchParams();
+    params.set("relay", relayUrl2);
+    params.set("secret", secret);
+    return `bunker://${bunkerPubkey}?${params.toString()}`;
+  }
+
   // src/page/pair.ts
+  function relayUrl() {
+    return location.origin.replace(/^http/, "ws") + "/";
+  }
   var RECENT_SECONDS = 3600;
   function ago(seconds) {
     if (seconds < 90) return "just now";
@@ -6232,11 +6243,11 @@
   function show(id, visible) {
     $(id).hidden = !visible;
   }
-  function renderQr(text) {
+  function renderQr(text, target = "qr") {
     const qr = qrcode_default(0, "M");
     qr.addData(text);
     qr.make();
-    $("qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    $(target).innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
   }
   function profileFromEvent(ev) {
     try {
@@ -6270,6 +6281,14 @@
     $("peers").textContent = peersLine;
     const ls = status.lastSign;
     $("last-sign").textContent = !ls ? "Nothing has asked this share to sign yet." : ls.ok ? `Signed for device ${ls.requesterIndex ?? "?"}, ${ago(now - ls.at)}.` : `Refused a request from device ${ls.requesterIndex ?? "?"}, ${ago(now - ls.at)}: ${ls.reason ?? "no reason recorded"}.`;
+    const b = status.bunker;
+    if (b) {
+      const apps = b.sessions.length;
+      $("apps").textContent = apps === 0 ? "No app is connected yet. The bunker link was shown when the share was held; a management call can show it again." : `${apps} ${apps === 1 ? "app is" : "apps are"} connected.`;
+      const lr = b.lastRequest;
+      $("last-app").textContent = !lr ? "No app has asked for anything yet." : lr.ok ? `Answered ${describeMethod(lr.method)}, ${ago(now - lr.at)}.` : `Could not answer ${describeMethod(lr.method)}, ${ago(now - lr.at)}: ${lr.reason ?? "no reason recorded"}.`;
+      $("diag-bunker-npub").textContent = npubEncode(b.pubkey);
+    }
     const list = $("diag-peers");
     list.innerHTML = "";
     for (const p of peers) {
@@ -6285,6 +6304,22 @@
     $("diag-relay").textContent = location.origin.replace(/^http/, "ws") + "/";
     $("diag-source").textContent = status.source === "env" ? "set in the environment (OWNER_CREDS)" : "received by pairing";
     show("diagnostics", true);
+  }
+  function describeMethod(method) {
+    switch (method) {
+      case "sign_event":
+        return "a signing request";
+      case "get_public_key":
+        return "a request for the key's public half";
+      case "nip44_encrypt":
+      case "nip04_encrypt":
+        return "an encryption request";
+      case "nip44_decrypt":
+      case "nip04_decrypt":
+        return "a decryption request";
+      default:
+        return `a ${method} request`;
+    }
   }
   function runPairing(status) {
     const pairing = status.pairing;
@@ -6402,16 +6437,17 @@
         button.disabled = false;
         return;
       }
-      const { echo } = await res.json();
+      const { echo, bunker } = await res.json();
       pool.publish(session.ack(confirmedSender, nowSec()));
       pool.publish(echo);
       clearTimeout(expiry);
       creds = null;
-      setTimeout(() => {
-        pool.close();
-        location.reload();
-      }, 1500);
-      setStep("Held. Reloading.");
+      setTimeout(() => pool.close(), 1500);
+      show("confirm-block", false);
+      show("held-block", true);
+      $("bunker-uri").value = bunkerUrl(bunker.pubkey, relayUrl(), bunker.secret);
+      renderQr(bunkerUrl(bunker.pubkey, relayUrl(), bunker.secret), "bunker-qr");
+      setStep("Held.");
     });
     $("decline").addEventListener("click", () => {
       session.zeroize();
@@ -6424,6 +6460,10 @@
     $("copy-uri").addEventListener("click", () => {
       void navigator.clipboard.writeText($("frost-uri").value);
     });
+    $("copy-bunker").addEventListener("click", () => {
+      void navigator.clipboard.writeText($("bunker-uri").value);
+    });
+    $("done").addEventListener("click", () => location.reload());
   }
   async function main() {
     const res = await fetch("/api/status");

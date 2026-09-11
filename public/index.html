@@ -22,7 +22,7 @@
   .quiet { opacity: 0.7; font-size: 0.9rem; }
   /* 11.2b: a mode=offer code is presented with visibly greater weight. */
   #qr-block { border: 3px solid currentColor; border-radius: 0.75rem; padding: 1rem; margin: 1rem 0; }
-  #qr svg { display: block; width: min(100%, 18rem); height: auto; margin: 0 auto; }
+  #qr svg, #bunker-qr svg { display: block; width: min(100%, 18rem); height: auto; margin: 0 auto; }
   .direction { font-weight: 600; text-align: center; margin: 0.75rem 0 0; }
   #code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2.4rem; letter-spacing: 0.4rem; text-align: center; margin: 0.5rem 0; }
   #confirm-block { border: 1px solid #8884; border-radius: 0.75rem; padding: 1rem; margin: 1rem 0; }
@@ -50,6 +50,9 @@
   <p id="peers" class="quiet"></p>
   <h2>Last signing</h2>
   <p id="last-sign" class="quiet"></p>
+  <h2>Apps</h2>
+  <p id="apps" class="quiet"></p>
+  <p id="last-app" class="quiet"></p>
 </div>
 
 <div id="unclaimed-view" hidden>
@@ -76,6 +79,13 @@
       <button id="confirm" type="button">Hold this share here</button>
     </div>
   </div>
+  <div id="held-block" hidden>
+    <p>The share is held here. To let a nostr app sign with your key through it, give the app this bunker link. It is shown once; copy it now.</p>
+    <div id="bunker-qr"></div>
+    <div class="row"><input id="bunker-uri" readonly /><button id="copy-bunker" type="button">Copy</button></div>
+    <p class="quiet">Anyone with this link can sign as you until you rotate it, so treat it like a password. A management call can show it again or replace it.</p>
+    <button id="done" type="button">Done</button>
+  </div>
   <p id="error"></p>
   <details>
     <summary>Can't scan?</summary>
@@ -95,6 +105,7 @@
     <dt>Group</dt><dd id="diag-group-npub"></dd>
     <dt>This share</dt><dd id="diag-share-npub"></dd>
     <dt>Relay URL for your other devices</dt><dd id="diag-relay"></dd>
+    <dt>Bunker</dt><dd id="diag-bunker-npub"></dd>
     <dt>Share came from</dt><dd id="diag-source"></dd>
     <dt>Other devices</dt><dd><ul id="diag-peers" style="margin:0;padding-left:1rem"></ul></dd>
     <dt>Nonce rows written</dt><dd id="diag-nonces"></dd>

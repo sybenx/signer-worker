@@ -48,6 +48,18 @@ The page shows how many of your other devices reached this share in the last hou
 
 Signing follows the FROSTR protocol as `@frostr/bifrost` 2.0 speaks it. Whether that is the format the Igloo apps will speak is an open question with the maintainers ([FROSTR-ORG/bifrost#12](https://github.com/FROSTR-ORG/bifrost/issues/12)); if the answer changes the format, the change here will be a new major version and this README will say so.
 
+## Connect an app
+
+This Worker is also a [NIP-46](https://github.com/nostr-protocol/nips/blob/master/46.md) bunker: a nostr app that supports "remote signer" or "bunker" login can sign as you through it, without ever holding your key. When the share is held, the page shows a bunker link once, as text and as a QR code. Paste or scan it into the app.
+
+An app that has the link asks this Worker for a signature; the Worker asks your other devices for their parts over this same relay, combines them with its own, and hands the app a signed event. So signing through an app needs at least one other device connected to this relay at that moment (two of three shares, or whatever your threshold is). If none is, the app is told so in plain words rather than left waiting.
+
+The bunker link carries a secret. **Anyone with the link can sign as you** until the secret is replaced, so treat it like a password: it is shown once, it is never in the page's status data, and a management call (`getbunker`) can show it again or (`rotatebunkersecret`) replace it. Rotating does not disconnect apps already connected; `revokesession` does that, one app at a time.
+
+By default a connected app may ask for the key's public half, sign any kind of event, and encrypt or decrypt messages ([NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md); the older NIP-04 is off). `setbunkerpolicy` narrows that for every app (for example only kinds 1 and 7); `setsessionpolicy` narrows it for one. An app that asks for specific permissions when it connects gets no more than it asked for.
+
+The page shows how many apps are connected and what the last app request did.
+
 ## Which devices may ask
 
 By default every device in the group may ask this share to sign. To block one, or to label one, send a management call signed by the **group key**, which means your other devices sign it together, the same way they sign anything. The call is a `POST` to the Worker's URL with `Content-Type: application/nostr+json+rpc`, a [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) `Authorization` header with the `payload` tag, and a body of the shape [NIP-86](https://github.com/nostr-protocol/nips/blob/master/86.md) uses:
@@ -58,6 +70,12 @@ By default every device in the group may ask this share to sign. To block one, o
 | `listpeerpolicies` | | every device with a non-default policy |
 | `setpeerpolicy` | `[{ pubkey, allowReceive?, allowSend?, label?, note? }]` | what is now in force for that device |
 | `removepeerpolicy` | `[pubkey]` | the same, back to the default |
+| `getbunker` | | the bunker's pubkey, secret and policy |
+| `rotatebunkersecret` | | the new secret |
+| `setbunkerpolicy` | `[{ methods?: {name: bool}, kinds?: {"1": bool, "*": bool} }]` | the policy now in force for every app |
+| `listsessions` | | every app that has connected, with its policy |
+| `setsessionpolicy` | `[pubkey, policy or null]` | that app's policy |
+| `revokesession` | `[pubkey]` | that app disconnected; it needs the bunker link to return |
 
 `allowReceive: false` means this share refuses that device's requests, and the device sees why in the relay's reply. `allowSend` is reserved for the release in which this Worker asks other devices to sign. A policy with nothing but defaults is not stored, which is also how a block is lifted.
 
@@ -78,14 +96,14 @@ If your Worker is connected to a GitHub repo, Cloudflare may sync `wrangler.json
 - `GET /api/status`: whether a share is held, the group's name and picture, the share's index, the threshold and member count, and while nothing is held, what the pairing page needs. Never a credential.
 - `POST /api/claim`: the pairing page's one call; body `{ group, share, profile? }`. Refuses anything but a share that belongs to its group, refuses a second claim, and answers 404 when `OWNER_CREDS` is set.
 - `GET /pair`: the page a phone's camera lands on if it opened a browser rather than a FROSTR app. Static; it reads the link and hands it back as text.
-- The WebSocket at `/`: the relay your other devices connect to. It accepts `REQ`, `EVENT` and `CLOSE`, answers every `REQ` with `EOSE` at once because it stores nothing, and refuses every `EVENT` that is not a kind-20000 message from a member of the group addressed to this share, saying so in the `OK`.
+- The WebSocket at `/`: the relay your other devices and your apps connect to. It accepts `REQ`, `EVENT` and `CLOSE`, answers every `REQ` with `EOSE` at once because it stores nothing, and refuses every `EVENT` that is not a kind-20000 message from a member of the group addressed to this share, or a kind-24133 message addressed to the bunker, saying so in the `OK`.
 - `POST /` with `Content-Type: application/nostr+json+rpc`: the management call, see "Which devices may ask".
 
 Every endpoint that reaches storage is rate limited per IP at 60 requests a minute. Over the limit you get a `429` with a `Retry-After`. The page itself is a static file and is never rate limited.
 
 ## What this is not
 
-Not a relay for anything but its own group's traffic; not a key backup; not a place to hold more than one share; not a wallet. It stores no events and serves no history. The list of decisions is in `CLAUDE.md` "What it refuses to be".
+Not a relay for anything but its own group's traffic and its own bunker's; not a key backup; not a place to hold more than one share; not a wallet. It stores no events and serves no history. It does not open connections to other relays, so an app cannot reach it with a `nostrconnect://` link, only with the bunker link. The list of decisions is in `CLAUDE.md` "What it refuses to be".
 
 ## Attribution
 
@@ -96,7 +114,7 @@ Conventions, the deploy and update flow, the rate-limit shape, the IP normaliser
 ```bash
 npm install
 npm run dev          # wrangler dev, local DO with SQLite
-npm run test         # vitest under workerd: QRST, claim, relay, handlers, policy, budget, hibernation
+npm run test         # vitest under workerd: QRST, claim, relay, handlers, policy, bunker, budget, hibernation
 npm run typecheck
 npm run build-page   # rebuild public/pair.js after editing src/page/
 npm run deploy       # wrangler deploy

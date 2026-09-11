@@ -20,6 +20,7 @@ import {
   type ReceiverAction,
 } from "../qrst.ts";
 import { parseEventShape, type NostrEvent } from "../nostr.ts";
+import { bunkerUrl } from "../nip46.ts";
 import type { Credentials } from "../credentials.ts";
 import { xOnly } from "../frost.ts";
 
@@ -33,7 +34,12 @@ interface Status {
   peers?: Array<{ index: number; pubkey: string; lastSeen: number | null; policy: { allowSend: boolean; allowReceive: boolean }; label: string | null }>;
   lastSign?: { at: number; requesterIndex: number | null; ok: boolean; reason: string | null } | null;
   nonceRows?: { today: number; cap: number | null };
+  bunker?: { pubkey: string; sessions: Array<{ pubkey: string; lastActive: number }>; lastRequest: { at: number; method: string; ok: boolean; reason: string | null } | null };
   pairing?: { bounceHost: string; relays: string[]; origin: string } | null;
+}
+
+function relayUrl(): string {
+  return location.origin.replace(/^http/, "ws") + "/";
 }
 
 // "Reachable" means heard from recently. A bifrost node pings on connect
@@ -156,12 +162,12 @@ function show(id: string, visible: boolean): void {
   $(id).hidden = !visible;
 }
 
-function renderQr(text: string): void {
+function renderQr(text: string, target = "qr"): void {
   // Error correction M and no overlay (11.2b: an overlay would require H).
   const qr = qrcode(0, "M");
   qr.addData(text);
   qr.make();
-  $("qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+  $(target).innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
 }
 
 function profileFromEvent(ev: NostrEvent): { name?: string; picture?: string } {
@@ -205,6 +211,21 @@ function renderClaimed(status: Status): void {
     !ls ? "Nothing has asked this share to sign yet."
     : ls.ok ? `Signed for device ${ls.requesterIndex ?? "?"}, ${ago(now - ls.at)}.`
     : `Refused a request from device ${ls.requesterIndex ?? "?"}, ${ago(now - ls.at)}: ${ls.reason ?? "no reason recorded"}.`;
+  const b = status.bunker;
+  if (b) {
+    const apps = b.sessions.length;
+    $("apps").textContent =
+      apps === 0
+        ? "No app is connected yet. The bunker link was shown when the share was held; a management call can show it again."
+        : `${apps} ${apps === 1 ? "app is" : "apps are"} connected.`;
+    const lr = b.lastRequest;
+    $("last-app").textContent = !lr
+      ? "No app has asked for anything yet."
+      : lr.ok
+        ? `Answered ${describeMethod(lr.method)}, ${ago(now - lr.at)}.`
+        : `Could not answer ${describeMethod(lr.method)}, ${ago(now - lr.at)}: ${lr.reason ?? "no reason recorded"}.`;
+    $("diag-bunker-npub").textContent = npubEncode(b.pubkey);
+  }
   const list = $("diag-peers");
   list.innerHTML = "";
   for (const p of peers) {
@@ -223,6 +244,23 @@ function renderClaimed(status: Status): void {
   $("diag-relay").textContent = location.origin.replace(/^http/, "ws") + "/";
   $("diag-source").textContent = status.source === "env" ? "set in the environment (OWNER_CREDS)" : "received by pairing";
   show("diagnostics", true);
+}
+
+function describeMethod(method: string): string {
+  switch (method) {
+    case "sign_event":
+      return "a signing request";
+    case "get_public_key":
+      return "a request for the key's public half";
+    case "nip44_encrypt":
+    case "nip04_encrypt":
+      return "an encryption request";
+    case "nip44_decrypt":
+    case "nip04_decrypt":
+      return "a decryption request";
+    default:
+      return `a ${method} request`;
+  }
 }
 
 // --- Pairing ---------------------------------------------------------------
@@ -362,7 +400,7 @@ function runPairing(status: Status): void {
       button.disabled = false;
       return;
     }
-    const { echo } = (await res.json()) as { echo: NostrEvent };
+    const { echo, bunker } = (await res.json()) as { echo: NostrEvent; bunker: { pubkey: string; secret: string } };
     // 7 step 17: ACK to the sender, then the echo that tells the device
     // that handed the share over that it has arrived. Both published by
     // this browser; the Worker never opens a connection.
@@ -370,11 +408,14 @@ function runPairing(status: Status): void {
     pool.publish(echo);
     clearTimeout(expiry);
     creds = null;
-    setTimeout(() => {
-      pool.close();
-      location.reload();
-    }, 1500);
-    setStep("Held. Reloading.");
+    setTimeout(() => pool.close(), 1500);
+    // The bunker link, shown this once. It carries the secret an app
+    // needs to connect, so it is never in the public status document.
+    show("confirm-block", false);
+    show("held-block", true);
+    $<HTMLInputElement>("bunker-uri").value = bunkerUrl(bunker.pubkey, relayUrl(), bunker.secret);
+    renderQr(bunkerUrl(bunker.pubkey, relayUrl(), bunker.secret), "bunker-qr");
+    setStep("Held.");
   });
 
   $("decline").addEventListener("click", () => {
@@ -389,6 +430,10 @@ function runPairing(status: Status): void {
   $("copy-uri").addEventListener("click", () => {
     void navigator.clipboard.writeText($<HTMLInputElement>("frost-uri").value);
   });
+  $("copy-bunker").addEventListener("click", () => {
+    void navigator.clipboard.writeText($<HTMLInputElement>("bunker-uri").value);
+  });
+  $("done").addEventListener("click", () => location.reload());
 }
 
 async function main(): Promise<void> {

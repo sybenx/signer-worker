@@ -23,6 +23,7 @@ import { bech32m } from "@scure/base";
 import {
   combine_partial_sigs,
   create_ecdh_share,
+  derive_ecdh_secret,
   get_group_signing_ctx,
   sign_msg,
   verify_partial_sig,
@@ -362,6 +363,17 @@ export function createEcdhPkg(members: number[], ecdhPks: string[], share: Share
     keyshare: create_ecdh_share(members, share, ecdh_pk).pubkey,
   }));
   return { idx: share.idx, members, entries };
+}
+
+// bifrost combine_ecdh_pkgs: the keyshares for one target, summed into
+// the shared point (33-byte compressed hex).
+export function combineEcdhPkgs(pkgs: ECDHPackage[], ecdhPk: string): string {
+  const keyshares = pkgs.map((pkg) => {
+    const entry = pkg.entries.find((e) => e.ecdh_pk === ecdhPk);
+    if (!entry) throw new Error(`ecdh_pk ${ecdhPk} not found in package from idx ${pkg.idx}`);
+    return { idx: pkg.idx, pubkey: entry.keyshare };
+  });
+  return derive_ecdh_secret(keyshares);
 }
 
 // --- bech32m packages (bifrost src/encoder) ------------------------------

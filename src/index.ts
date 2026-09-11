@@ -72,7 +72,7 @@ async function handleClaim(request: Request, env: Env): Promise<Response> {
     case "conflict":
       return json({ error: "a share is already held here" }, 409);
     case "claimed":
-      return json({ sharePubkey: result.sharePubkey, echo: result.echo });
+      return json({ sharePubkey: result.sharePubkey, echo: result.echo, bunker: result.bunker });
   }
 }
 

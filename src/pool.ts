@@ -177,6 +177,27 @@ export function storeIncoming(
   return stored;
 }
 
+// bifrost consume_incoming: one of the nonces a peer handed this signer,
+// taken (deleted) for a session this signer initiates. Null when the
+// peer has handed over nothing usable.
+export function consumeIncoming(sql: SqlStorage, peerIdx: number, nowSec: number): MemberPublicNonce | null {
+  const row = sql
+    .exec<{ code: string; binder_pn: string; hidden_pn: string }>(
+      "SELECT code, binder_pn, hidden_pn FROM nonces WHERE direction = 'in' AND peer_idx = ? ORDER BY created_at LIMIT 1",
+      peerIdx,
+    )
+    .toArray()[0];
+  if (!row) return null;
+  sql.exec("DELETE FROM nonces WHERE direction = 'in' AND peer_idx = ? AND code = ?", peerIdx, row.code);
+  chargeRows(sql, nowSec, NONCE_ROW_COST);
+  return { idx: peerIdx, code: row.code, binder_pn: row.binder_pn, hidden_pn: row.hidden_pn };
+}
+
+// bifrost can_sign: enough of the peer's nonces in hand to initiate.
+export function canInitiateWith(sql: SqlStorage, peerIdx: number): boolean {
+  return incomingCount(sql, peerIdx) > NONCE_CRITICAL_THRESHOLD;
+}
+
 // bifrost get_pool_status: what this signer holds FROM each peer.
 export function poolStatus(sql: SqlStorage, group: GroupPackage, ourIdx: number): NoncePoolStatus[] {
   const out: NoncePoolStatus[] = [];
