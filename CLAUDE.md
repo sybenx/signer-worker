@@ -71,6 +71,7 @@ npm run typecheck        # Worker and page, two tsconfigs
 npm run build-page       # rebuild public/pair.js
 node scripts/build-page.mjs --check
 node scripts/bench.mjs   # Node CPU figures for docs/budget.md
+node scripts/sender.mjs <pairing link> [--auto|--light]   # a scripted QRST Sender, for trying the page without a phone
 npm run sync-badge
 npm run deploy
 ```

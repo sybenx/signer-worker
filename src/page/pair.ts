@@ -265,6 +265,7 @@ function runPairing(status: Status): void {
     show("code-block", false);
     show("qr-block", false);
     show("confirm-block", true);
+    setStep("Your other device sent a share.");
     const groupPk = xOnly(creds.group.group_pk);
     pool.requestProfile(groupPk);
     $("confirm-who").textContent = `A share of a key with ${creds.group.members.length} shares, any ${creds.group.threshold} of which sign together.`;
