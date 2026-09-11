@@ -6,22 +6,16 @@
 import pkg from "../package.json";
 import { normalizeIp } from "./ip.ts";
 import { HTTP_RATE_LIMIT_PERIOD_SECONDS } from "./limits.ts";
-import { groupSignerReason, verifyNip98 } from "./nip98.ts";
+import { MANAGEMENT_CONTENT_TYPE, groupSignerReason, verifyNip98 } from "./nip98.ts";
 import { ownerCredsConfigured } from "./owner-creds.ts";
+import { PAIRING_RELAYS } from "./qrst.ts";
 import { signerStub } from "./signer-stub.ts";
 
+// The entry module exports the handler and the Durable Object class and
+// NOTHING ELSE: workerd refuses to start a Worker whose entry module has
+// a named export that is not a handler ("Incorrect type for map entry").
+// The vitest harness does not enforce this, so test/exports.test.ts does.
 export { Signer } from "./signer.ts";
-
-// Relays the pairing page uses to reach the phone during a transfer. The
-// browser holds these connections, never the Worker. Three, so a single
-// relay's outage or `auth-required` does not end a session
-// (QR_SECRET_TRANSFER.md 11.5).
-export const PAIRING_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
-
-// nips/86.md: "on the same URI as the relay's websocket", distinguished
-// by this content type. Matched as a substring: clients send compound
-// types.
-export const MANAGEMENT_CONTENT_TYPE = "application/nostr+json+rpc";
 
 function json(body: unknown, status = 200, contentType = "application/json"): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": contentType } });

@@ -33,6 +33,13 @@ export const KIND_ABORT = 24407;
 export const KIND_SEAL = 13;
 export const KIND_GIFT_WRAP = 1059;
 
+// Relays the pairing page uses to reach the phone during a transfer
+// (11.3). The browser holds these connections, never the Worker. Three,
+// so a single relay's outage or `auth-required` does not end a session
+// (11.5), and well-known ones, so a phone's own client is likely already
+// connected to at least one.
+export const PAIRING_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
+
 // --- Burners and npubs ----------------------------------------------------
 
 export interface Burner {

@@ -49,6 +49,11 @@ function decodeAuthHeader(header: string | null): string | null {
   }
 }
 
+// nips/86.md: "on the same URI as the relay's websocket", distinguished
+// by this content type. Matched as a substring: clients send compound
+// types.
+export const MANAGEMENT_CONTENT_TYPE = "application/nostr+json+rpc";
+
 export const UNCLAIMED_REASON = "no share is held here yet, so there is no group key to manage it with";
 export const WRONG_SIGNER_REASON = "Authorization event is not signed by the group key";
 
