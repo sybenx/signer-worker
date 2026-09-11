@@ -1,6 +1,6 @@
 {
   "name": "signer-worker",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "One FROSTR share, held by a Cloudflare Worker on the free tier and deployed in one click.",
@@ -9,9 +9,10 @@
     "dev": "wrangler dev",
     "test": "vitest run",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.page.json",
     "cf-typegen": "wrangler types",
-    "sync-badge": "node scripts/sync-badge.mjs"
+    "sync-badge": "node scripts/sync-badge.mjs",
+    "build-page": "node scripts/build-page.mjs"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",
@@ -19,7 +20,8 @@
     "@noble/hashes": "2.4.0",
     "@scure/base": "2.0.0",
     "@vbyte/buff": "1.1.0",
-    "@vbyte/frost": "1.1.5"
+    "@vbyte/frost": "1.1.5",
+    "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.8",

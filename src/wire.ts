@@ -116,11 +116,21 @@ function hmacAad(key: Uint8Array, message: Uint8Array, aad: Uint8Array): Uint8Ar
   return hmac(sha256, key, concatBytes(aad, message));
 }
 
-export function nip44Encrypt(secret: Uint8Array, plaintext: string, nonce: Uint8Array = randomBytes(32)): string {
+// `encoding` picks the outer text form: bifrost's base64url without
+// padding for peer traffic (src/signer.ts), or NIP-44's own base64 for
+// the QRST gift wraps (src/qrst.ts), which speak to clients that follow
+// the NIP as written.
+export function nip44Encrypt(
+  secret: Uint8Array,
+  plaintext: string,
+  encoding: "base64url" | "base64" = "base64url",
+  nonce: Uint8Array = randomBytes(32),
+): string {
   const keys = messageKeys(conversationKey(secret), nonce);
   const ciphertext = chacha20(keys.chachaKey, keys.chachaNonce, pad(plaintext));
   const mac = hmacAad(keys.hmacKey, ciphertext, nonce);
-  return base64urlnopad.encode(concatBytes(new Uint8Array([2]), nonce, ciphertext, mac));
+  const bytes = concatBytes(new Uint8Array([2]), nonce, ciphertext, mac);
+  return encoding === "base64" ? base64.encode(bytes) : base64urlnopad.encode(bytes);
 }
 
 function decodePayload(payload: string): Uint8Array {

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pairing link</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 36rem; margin: 3rem auto 0; padding: 0 1.25rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; }
+  .row { display: flex; gap: 0.5rem; align-items: center; }
+  .row input { flex: 1; font-family: ui-monospace, monospace; padding: 0.5rem; }
+  button { padding: 0.5rem 0.9rem; cursor: pointer; font: inherit; }
+  .quiet { opacity: 0.7; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<!-- The bounce page (QR_SECRET_TRANSFER.md 11.2a). A phone's own FROSTR
+     app reads the QR's fragment and never comes here; this page is for
+     the platform camera that opened a browser instead. It reads its own
+     fragment, which never reached the server, and hands the parameters
+     back as text. It acts as a party to nothing. -->
+<h1>Pairing link</h1>
+<p id="explain">This link pairs a FROSTR app with a device that is asking to hold one share of a key. Open it in your FROSTR app.</p>
+<div class="row"><input id="uri" readonly /><button id="copy" type="button">Copy</button></div>
+<p class="quiet" id="detail"></p>
+<p class="quiet">The link carries a one-time pairing address and relay names. It does not contain a key or a share.</p>
+<script>
+(function () {
+  var params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  var npub = params.get("npub");
+  var mode = params.get("mode");
+  var p = params.get("p");
+  var v = params.get("v");
+  var out = document.getElementById("uri");
+  var detail = document.getElementById("detail");
+  if (v !== "1" || !npub || !mode || !p) {
+    document.getElementById("explain").textContent = "This link is incomplete. Show the QR code again on the device that is receiving the share.";
+    out.parentElement.hidden = true;
+    return;
+  }
+  var q = new URLSearchParams();
+  q.set("v", v); q.set("mode", mode); q.set("p", p);
+  params.getAll("relay").slice(0, 4).forEach(function (r) { q.append("relay", r); });
+  var origin = params.get("origin"); if (origin) q.set("origin", origin);
+  out.value = "frost://" + npub + "?" + q.toString();
+  detail.textContent = mode === "offer"
+    ? "The device that showed this code is receiving. Your app will be the one sending a share."
+    : "The device that showed this code is sending. Your app will be the one receiving.";
+  document.getElementById("copy").addEventListener("click", function () { navigator.clipboard.writeText(out.value); });
+})();
+</script>
+</body>
+</html>

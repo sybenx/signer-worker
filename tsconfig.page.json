@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": []
+  },
+  "include": ["src/page", "src/qrst.ts", "src/nostr.ts", "src/wire.ts", "src/frost.ts", "src/credentials.ts"]
+}
