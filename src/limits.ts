@@ -34,11 +34,43 @@ export function maxNonceRowsPerDay(env: Env): number | null {
 export const HTTP_RATE_LIMIT_PERIOD_SECONDS = 60;
 
 // A WebSocket attachment (the hibernation API's per-connection state)
-// may hold at most 2 KiB
-// (developers.cloudflare.com/durable-objects/api/state/#serializeattachment,
-// checked 2026-09-11: "up to 2,048 bytes"). Checked before storing
-// rather than discovered by serializeAttachment throwing.
-export const MAX_CONN_STATE_BYTES = 2048;
+// may hold at most 16,384 bytes serialized
+// (developers.cloudflare.com/durable-objects/best-practices/websockets/,
+// checked 2026-09-11). Checked before storing rather than discovered by
+// serializeAttachment throwing, and set below the ceiling, as bothy does,
+// so what else the state carries (the address) cannot push a REQ that
+// passed over the edge.
+export const MAX_CONN_STATE_BYTES = 15 * 1024;
+
+// Frames larger than this are refused before JSON.parse. A bifrost sign
+// request for a 100-hash batch with three members' nonces is under 30 KB;
+// nothing legitimate approaches this.
+export const MAX_FRAME_BYTES = 64 * 1024;
+
+// Per-IP message throttle inside the object (bothy's figures), in memory,
+// never in SQLite: a best-effort abuse mitigation is not worth a row per
+// message, and resetting on hibernation is fine.
+export const IP_RATE_LIMIT_WINDOW_MS = 10_000;
+export const IP_RATE_LIMIT_MAX_MESSAGES = 50;
+
+// Per-peer request throttle, by pubkey, so a peer cannot get a second
+// allowance by changing address. A bifrost node batches its signing into
+// one request per 100 ms, so a busy bunker can legitimately ask several
+// times a second for a moment; two a second sustained is far above any
+// real client and, at ~6 ms of object CPU per sign, still under a second
+// of CPU a minute (docs/budget.md).
+export const PEER_RATE_LIMIT_WINDOW_MS = 60_000;
+export const PEER_RATE_LIMIT_MAX_REQUESTS = 120;
+
+// Nonce pool figures, bifrost's own (src/const.ts): pool size per peer,
+// the level under which a peer is handed more, how many, and the level
+// under which bifrost refuses to initiate. This Worker initiates nothing
+// in this release, so the critical threshold is recorded for the NIP-46
+// release and unused here.
+export const NONCE_POOL_SIZE = 100;
+export const NONCE_MIN_THRESHOLD = 20;
+export const NONCE_REPLENISH_COUNT = 50;
+export const NONCE_CRITICAL_THRESHOLD = 5;
 
 // Concurrent subscriptions one connection may hold. A bifrost node keeps
 // exactly one; a handful covers a client that reconnects untidily.

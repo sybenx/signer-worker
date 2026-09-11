@@ -1,27 +1,30 @@
-// The Worker: routes, the per-IP rate limit, and nothing that costs CPU.
-// Every path that reaches the Durable Object is rate limited before the
-// Worker's own code runs; static assets are not (they are free).
-// Adapted from bothy's src/index.ts (github.com/sybenx/bothy, MIT).
+// The Worker: routes, the per-IP rate limit, one NIP-98 verification, and
+// nothing that costs CPU beyond that. Every path that reaches the Durable
+// Object is rate limited before the Worker's own code runs; static assets
+// are not (they are free). Adapted from bothy's src/index.ts
+// (github.com/sybenx/bothy, MIT).
 import pkg from "../package.json";
-import { ownerCredsConfigured } from "./owner-creds.ts";
 import { normalizeIp } from "./ip.ts";
 import { HTTP_RATE_LIMIT_PERIOD_SECONDS } from "./limits.ts";
+import { groupSignerReason, verifyNip98 } from "./nip98.ts";
+import { ownerCredsConfigured } from "./owner-creds.ts";
 import { signerStub } from "./signer-stub.ts";
 
 export { Signer } from "./signer.ts";
 
-// Relays the pairing page uses to reach the phone during a transfer.
-// The browser holds these connections, never the Worker. Three, so a
-// single relay's outage or `auth-required` does not end a session
-// (QR_SECRET_TRANSFER.md 11.5), and well-known ones, so a phone's own
-// client is likely already connected to at least one.
+// Relays the pairing page uses to reach the phone during a transfer. The
+// browser holds these connections, never the Worker. Three, so a single
+// relay's outage or `auth-required` does not end a session
+// (QR_SECRET_TRANSFER.md 11.5).
 export const PAIRING_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+// nips/86.md: "on the same URI as the relay's websocket", distinguished
+// by this content type. Matched as a substring: clients send compound
+// types.
+export const MANAGEMENT_CONTENT_TYPE = "application/nostr+json+rpc";
+
+function json(body: unknown, status = 200, contentType = "application/json"): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": contentType } });
 }
 
 // Returns a 429 to send back, or null to continue. An absent binding
@@ -31,10 +34,10 @@ async function rateLimited(limiter: RateLimit | undefined, request: Request): Pr
   const key = normalizeIp(request.headers.get("CF-Connecting-IP") ?? "unknown");
   const { success } = await limiter.limit({ key });
   if (success) return null;
-  return json(
-    { error: "rate limited", retryAfterSeconds: HTTP_RATE_LIMIT_PERIOD_SECONDS },
-    429,
-  );
+  return new Response(JSON.stringify({ error: "rate limited", retryAfterSeconds: HTTP_RATE_LIMIT_PERIOD_SECONDS }), {
+    status: 429,
+    headers: { "Content-Type": "application/json", "Retry-After": String(HTTP_RATE_LIMIT_PERIOD_SECONDS) },
+  });
 }
 
 async function handleStatus(request: Request, env: Env): Promise<Response> {
@@ -44,9 +47,8 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const body: Record<string, unknown> = { version: pkg.version, ...status };
   if (!status.claimed) {
-    // Everything the pairing page needs to show a QR. The claim endpoint
-    // is closed when OWNER_CREDS is set, so the page must not offer to
-    // pair; `pairing: null` is how it learns that.
+    // What the pairing page needs to show a QR; `null` tells it not to
+    // offer pairing, because OWNER_CREDS closed the claim endpoint.
     body.pairing = ownerCredsConfigured(env)
       ? null
       : { bounceHost: env.BOUNCE_HOST ?? url.host, relays: PAIRING_RELAYS, origin: url.origin };
@@ -58,10 +60,7 @@ async function handleClaim(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
   const limited = await rateLimited(env.RATE_LIMIT_API, request);
   if (limited !== null) return limited;
-  // Mirrors claim()'s own first check so a configured deployment refuses
-  // without waking the object.
   if (ownerCredsConfigured(env)) return new Response("not found", { status: 404 });
-
   let body: unknown;
   try {
     body = await request.json();
@@ -69,9 +68,7 @@ async function handleClaim(request: Request, env: Env): Promise<Response> {
     return json({ error: "malformed request body" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (typeof b.group !== "string" || typeof b.share !== "string") {
-    return json({ error: "expected group and share" }, 400);
-  }
+  if (typeof b.group !== "string" || typeof b.share !== "string") return json({ error: "expected group and share" }, 400);
   const result = await signerStub(env).claim(b.group, b.share, b.profile, new URL(request.url).host);
   switch (result.status) {
     case "disabled":
@@ -85,16 +82,46 @@ async function handleClaim(request: Request, env: Env): Promise<Response> {
   }
 }
 
+// The management call: NIP-86's shape, authenticated by a NIP-98 event
+// signed by the GROUP key -- which means the group's devices produced a
+// threshold signature to make it. Verified here, in the Worker, before
+// the object is woken: a forged call costs one schnorr verify and no
+// Durable Object request.
+async function handleManagement(request: Request, env: Env): Promise<Response> {
+  const limited = await rateLimited(env.RATE_LIMIT_API, request);
+  if (limited !== null) return limited;
+  // Bytes as sent: the payload tag binds exactly these.
+  const body = new Uint8Array(await request.arrayBuffer());
+  const auth = verifyNip98(request, body, Math.floor(Date.now() / 1000));
+  if (!auth.ok) return json({ error: auth.reason }, 401, MANAGEMENT_CONTENT_TYPE);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    return json({ error: "request body is not valid JSON" }, 200, MANAGEMENT_CONTENT_TYPE);
+  }
+  const call = parsed as { method?: unknown; params?: unknown } | null;
+  const params = Array.isArray(call?.params) ? (call.params as unknown[]) : [];
+  const stub = signerStub(env);
+  const status = await stub.getStatus();
+  const denial = groupSignerReason(auth.pubkey, status.group?.pubkey ?? null);
+  if (denial !== null) return json({ error: denial }, 401, MANAGEMENT_CONTENT_TYPE);
+  return json(await stub.manage(call?.method, params), 200, MANAGEMENT_CONTENT_TYPE);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "POST" && (request.headers.get("Content-Type") ?? "").includes(MANAGEMENT_CONTENT_TYPE)) {
+      return handleManagement(request, env);
+    }
     if (url.pathname === "/api/status") return handleStatus(request, env);
     if (url.pathname === "/api/claim") return handleClaim(request, env);
     if (url.pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
-    // Signing traffic (the WebSocket) arrives in the next release; until
-    // then an upgrade is refused rather than half-answered.
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-      return new Response("not found", { status: 404 });
+      const limited = await rateLimited(env.RATE_LIMIT_API, request);
+      if (limited !== null) return limited;
+      return signerStub(env).fetch(request);
     }
     return env.ASSETS.fetch(request);
   },

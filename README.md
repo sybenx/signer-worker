@@ -18,7 +18,7 @@ If you have already deployed, see "Keeping it updated" below for the one file th
 2. On **Set up your application**, pick your GitHub account from the **Git account** dropdown. Cloudflare creates a repo there holding your copy. Leave **Create private Git repository** unchecked unless you have a reason; public repos get free GitHub Actions minutes, which the updater uses. Click **Deploy**.
 3. The build takes about 30 seconds. **Refresh the page** when it finishes. A **Visit** button appears at the top right; that's your Worker.
 4. Open that URL. It shows a QR code. In your FROSTR app, choose to send a share to another device and scan it. A five-digit code appears on this page; type it into the app. The page then names the group the share belongs to and asks you to confirm. This step is one-time and permanent; see "What it holds" below.
-5. In the app, add this Worker's relay address to the group's relay list. The address is shown on the page under **Diagnostics**.
+5. In the app, add this Worker's relay address to the group's relay list. The address is shown on the page under **Diagnostics**. Once a device has connected, the page says so.
 
 No dashboard configuration is required.
 
@@ -40,9 +40,26 @@ The pairing is permanent. Once a share is held here, no second share can be held
 
 The QR code never carries the share. It carries a one-time address the page is listening at; the share travels encrypted from your app to this page, and the code you type is what proves the app is talking to this page and not to someone who photographed it. Before anything is kept, the page names the group and asks.
 
-## What it does today
+## Signing
 
-Holds a share. Signing with it, which is what the share is for, arrives in the next release; until then the relay address under Diagnostics is shown so you can add it to your group ahead of time, and connections to it are refused. This README will say when that changes.
+Once your other devices list this Worker's relay address, it takes part in signing like any other device holding a share: a device that wants a signature sends the request to this relay, this share answers with its part, and the device combines the parts. Nothing about the request leaves the Worker; it stores no events, and it answers only requests addressed to its own share by members of its own group.
+
+The page shows how many of your other devices reached this share in the last hour and what the last signing request did. A device that has never reached it is the usual sign that the relay address has not been added on that device.
+
+Signing follows the FROSTR protocol as `@frostr/bifrost` 2.0 speaks it. Whether that is the format the Igloo apps will speak is an open question with the maintainers ([FROSTR-ORG/bifrost#12](https://github.com/FROSTR-ORG/bifrost/issues/12)); if the answer changes the format, the change here will be a new major version and this README will say so.
+
+## Which devices may ask
+
+By default every device in the group may ask this share to sign. To block one, or to label one, send a management call signed by the **group key**, which means your other devices sign it together, the same way they sign anything. The call is a `POST` to the Worker's URL with `Content-Type: application/nostr+json+rpc`, a [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) `Authorization` header with the `payload` tag, and a body of the shape [NIP-86](https://github.com/nostr-protocol/nips/blob/master/86.md) uses:
+
+| Method | Params | Answer |
+|---|---|---|
+| `supportedmethods` | | the list below |
+| `listpeerpolicies` | | every device with a non-default policy |
+| `setpeerpolicy` | `[{ pubkey, allowReceive?, allowSend?, label?, note? }]` | what is now in force for that device |
+| `removepeerpolicy` | `[pubkey]` | the same, back to the default |
+
+`allowReceive: false` means this share refuses that device's requests, and the device sees why in the relay's reply. `allowSend` is reserved for the release in which this Worker asks other devices to sign. A policy with nothing but defaults is not stored, which is also how a block is lifted.
 
 ## Configuration
 
@@ -52,7 +69,7 @@ The deploy button only asks for a project name. Everything else is an optional v
 |---|---|
 | `OWNER_CREDS` | Hold a share set at deploy time instead of pairing: the group and share strings from your FROSTR app, separated by a space (`bfgroup1... bfshare1...`). Disables the pairing page and the claim endpoint. Add it as a **secret**, not a plain variable: a Worker connected to a Git repo may sync plain variables from the repo on deploy. |
 | `BOUNCE_HOST` | Host named in the pairing QR for a phone whose camera opens a browser instead of a FROSTR app. Defaults to this Worker's own host, which serves that page itself. |
-| `MAX_NONCE_ROWS_PER_DAY` | Reserved for the signing release. Documented there. |
+| `MAX_NONCE_ROWS_PER_DAY` | How many rows of signing material this Worker may write in a day, against the free tier's 100,000. Defaults to `50000`. Past it, the Worker still signs with what it has handed out but hands out no more until midnight UTC. Raise it to a number, or set it to `off`. |
 
 If your Worker is connected to a GitHub repo, Cloudflare may sync `wrangler.jsonc`'s config on every deploy, which can overwrite a plain variable you added in the dashboard. Secrets are never synced.
 
@@ -61,6 +78,8 @@ If your Worker is connected to a GitHub repo, Cloudflare may sync `wrangler.json
 - `GET /api/status`: whether a share is held, the group's name and picture, the share's index, the threshold and member count, and while nothing is held, what the pairing page needs. Never a credential.
 - `POST /api/claim`: the pairing page's one call; body `{ group, share, profile? }`. Refuses anything but a share that belongs to its group, refuses a second claim, and answers 404 when `OWNER_CREDS` is set.
 - `GET /pair`: the page a phone's camera lands on if it opened a browser rather than a FROSTR app. Static; it reads the link and hands it back as text.
+- The WebSocket at `/`: the relay your other devices connect to. It accepts `REQ`, `EVENT` and `CLOSE`, answers every `REQ` with `EOSE` at once because it stores nothing, and refuses every `EVENT` that is not a kind-20000 message from a member of the group addressed to this share, saying so in the `OK`.
+- `POST /` with `Content-Type: application/nostr+json+rpc`: the management call, see "Which devices may ask".
 
 Every endpoint that reaches storage is rate limited per IP at 60 requests a minute. Over the limit you get a `429` with a `Retry-After`. The page itself is a static file and is never rate limited.
 
@@ -77,7 +96,7 @@ Conventions, the deploy and update flow, the rate-limit shape, the IP normaliser
 ```bash
 npm install
 npm run dev          # wrangler dev, local DO with SQLite
-npm run test         # vitest under workerd: QRST conformance, claim, the Phase 0 spike
+npm run test         # vitest under workerd: QRST, claim, relay, handlers, policy, budget, hibernation
 npm run typecheck
 npm run build-page   # rebuild public/pair.js after editing src/page/
 npm run deploy       # wrangler deploy

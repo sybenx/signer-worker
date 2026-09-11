@@ -104,55 +104,73 @@ object. It would not be fine in the Worker.
 The pool is the one recurring write. Per bifrost 2.0.2's protocol
 (docs/PROTOCOL.md "Nonce Pool Management"), a signer hands each peer a
 package of derivation codes, keeps only the codes it handed out, and
-deletes a code when the peer spends it in a signing session. Defaults:
-pool size 100 per peer, replenish 50 when the outgoing pool for that peer
-falls under 20, refuse under 5.
+deletes a code when the peer spends it in a signing session. Defaults,
+bifrost's own ([src/limits.ts](../src/limits.ts)): pool size 100 per
+peer, replenish 50 when the outgoing pool for that peer falls under 20.
 
-Each code is one row in `nonces` (peer_idx, code, binder_pn, hidden_pn),
-and the row carries one index (peer_idx, code) for the lookup the sign
-handler does, so:
+Every figure below is asserted by [test/budget.test.ts](../test/budget.test.ts)
+against a real `SqlStorageCursor.rowsWritten`, so the test is the record
+and a change that moves one fails rather than drifting. `nonces` is a
+`WITHOUT ROWID` table whose composite primary key is its only index, so
+one nonce row is **one row written** (`pool.ts NONCE_ROW_COST`), not the
+two a rowid table with a separate unique index would cost. Each pool call
+also lands its total in the day's `counters` row: one more row per call,
+not per nonce.
 
 ```
-one nonce handed out    2 rows written   (row + index entry)
-one nonce spent         2 rows written   (delete is a write, row + index)
-one replenish (50)    100 rows written
+one nonce handed out      1 row
+one nonce spent           1 row   (the delete)
+one replenish of 50      51 rows  (50 + the counter)
+one sign                  2 rows  (the spend + the counter)   + 1 for last_sign
+one onboard (full pool) 101 rows
 ```
 
-Bounds, for a group of `P` peers that each keep this Worker as one of
-their relays:
+Bounds, for a group whose peers all keep this Worker as one of their
+relays:
 
-- A steady state where every sign consumes one nonce and the pool is
-  topped up during ping costs **4 rows per signature** (2 to hand out, 2
-  to spend). 100,000 rows is 25,000 signatures a day, which no phone will
-  ask for.
-- The failure mode is a peer that pings without ever signing, or a peer
-  that drops its pool and asks again: each ping that finds the outgoing
-  pool under 20 triggers a 100-row replenish. A peer pinging every second
-  with an empty pool would spend the day's budget in under 17 minutes.
-  `MAX_NONCE_ROWS_PER_DAY` ([src/limits.ts](../src/limits.ts), default
-  50,000, a number or the exact string `"off"`) is the cap: past it, the
-  Worker still answers pings but hands out no nonces until 00:00 UTC, and
-  says so in the ping response. Half the daily budget, so the other half
-  is always there for signing against nonces already issued.
-- The pool is capped at 100 per peer regardless of what the peer's
-  `pool_status` claims (bifrost's `generate_for_peer` enforces the same),
-  so a single ping can never request more than one replenish's worth.
+- Steady state, every sign consumes one nonce and the pool is topped up
+  as it drains: about **4 rows per signature** (a spend, its counter, a
+  fiftieth of a replenish, and `last_sign`). 100,000 rows is 25,000
+  signatures a day, which no phone will ask for.
+- The failure mode is a peer that drains its pool without signing, or
+  onboards again and again: each ping that finds the outgoing pool under
+  20 is a 51-row replenish, each onboard 101 rows. A peer doing that
+  every second would spend the day's budget in about half an hour.
+  `MAX_NONCE_ROWS_PER_DAY` (default 50,000, a number or the exact string
+  `"off"`) is the cap: past it, the Worker still answers pings and still
+  signs against nonces already issued, but hands out no new ones until
+  00:00 UTC. Half the daily budget, so the other half is always there for
+  signing. A spend is never refused for budget: refusing it would refuse a
+  signature the peer has every right to, over a row the day's allowance
+  already agreed to when the nonce was issued.
+- The pool is capped at 100 per peer in both directions regardless of what
+  the peer's `pool_status` claims (bifrost's `generate_for_peer` enforces
+  the same), so a single ping can never request more than one replenish's
+  worth, and a peer cannot fill this Worker's incoming pool past 100.
+- A peer's `last_seen` is refreshed at most once in five minutes, so a
+  peer pinging every second costs 288 rows a day, not 86,400.
 
-The claim writes a handful of rows once. Peer policy changes write one
-row each, by a NIP-98-signed management call, so they are the owner's to
-spend. The per-peer rate limit is in memory, never in SQLite, for the
-same reason bothy's is: a best-effort abuse mitigation is not worth a
-row per message.
+The claim writes a handful of rows once. Peer policy changes write one row
+each, by a NIP-98-signed management call, so they are the group's to
+spend. The per-IP and per-peer rate limits are in memory, never in SQLite,
+for the same reason bothy's is: a best-effort abuse mitigation is not
+worth a row per message.
 
 ## What a WebSocket message costs
 
 Every inbound message is one twentieth of a request against the daily
 100,000 — 2,000,000 messages a day, which is not a bound worth designing
 around. What *is* worth designing around is that a message must be
-refused before it costs CPU: the inbound path checks kind, then the `p`
-tag, then the per-peer rate limit, then the peer policy, and only then
-verifies the signature and decrypts. A stranger's event costs a JSON
-parse and three comparisons.
+refused before it costs CPU: the inbound path
+([src/signer.ts](../src/signer.ts) `handleEvent`) checks frame size, the
+per-IP window (50 in 10 s), kind, whether a share is held, the `p` tag,
+group membership, the per-peer window (120 a minute by pubkey), the peer
+policy, and whether any open subscription could carry the answer, and
+only then verifies the signature and decrypts. A stranger's event costs a
+JSON parse and a handful of comparisons; a member's malformed request
+costs one schnorr verify and one decrypt before the schema refuses it.
+[test/relay.test.ts](../test/relay.test.ts) asserts the order by the
+reason each refusal gives.
 
 ## The stack question
 

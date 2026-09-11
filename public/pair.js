@@ -6134,6 +6134,13 @@
   }
 
   // src/page/pair.ts
+  var RECENT_SECONDS = 3600;
+  function ago(seconds) {
+    if (seconds < 90) return "just now";
+    if (seconds < 3600) return `${Math.round(seconds / 60)} minutes ago`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)} hours ago`;
+    return `${Math.round(seconds / 86400)} days ago`;
+  }
   var $ = (id) => {
     const el = document.getElementById(id);
     if (!el) throw new Error(`missing #${id}`);
@@ -6254,8 +6261,25 @@
       img.hidden = false;
     }
     $("holding").textContent = `Holding share ${s.index} of ${g.members}. Any ${g.threshold} shares sign together; this one signs nothing alone.`;
-    $("peers").textContent = "Signing arrives in the next release; this share is held and waiting.";
-    $("last-sign").textContent = "No signing yet.";
+    const peers = status.peers ?? [];
+    const now = Math.floor(Date.now() / 1e3);
+    const recent = peers.filter((p) => p.lastSeen !== null && now - p.lastSeen < RECENT_SECONDS);
+    const blocked = peers.filter((p) => !p.policy.allowReceive);
+    let peersLine = peers.length === 0 ? "This share is the whole group." : recent.length === 0 ? `None of your ${peers.length} other devices has reached this share yet. Add its relay address (under Diagnostics) to the group's relay list.` : `${recent.length} of ${peers.length} other devices reached this share in the last hour.`;
+    if (blocked.length > 0) peersLine += ` ${blocked.length} ${blocked.length === 1 ? "is" : "are"} blocked from asking it to sign.`;
+    $("peers").textContent = peersLine;
+    const ls = status.lastSign;
+    $("last-sign").textContent = !ls ? "Nothing has asked this share to sign yet." : ls.ok ? `Signed for device ${ls.requesterIndex ?? "?"}, ${ago(now - ls.at)}.` : `Refused a request from device ${ls.requesterIndex ?? "?"}, ${ago(now - ls.at)}: ${ls.reason ?? "no reason recorded"}.`;
+    const list = $("diag-peers");
+    list.innerHTML = "";
+    for (const p of peers) {
+      const li = document.createElement("li");
+      li.textContent = `device ${p.index}${p.label ? ` (${p.label})` : ""}: ${npubEncode(p.pubkey)}, ${p.lastSeen === null ? "never heard from" : `heard from ${ago(now - p.lastSeen)}`}${p.policy.allowReceive ? "" : ", blocked"}${p.policy.allowSend ? "" : ", not asked"}`;
+      list.appendChild(li);
+    }
+    if (status.nonceRows) {
+      $("diag-nonces").textContent = status.nonceRows.cap === null ? `${status.nonceRows.today} today, no cap` : `${status.nonceRows.today} of ${status.nonceRows.cap} today`;
+    }
     $("diag-group-npub").textContent = npubEncode(g.pubkey);
     $("diag-share-npub").textContent = npubEncode(s.pubkey);
     $("diag-relay").textContent = location.origin.replace(/^http/, "ws") + "/";
