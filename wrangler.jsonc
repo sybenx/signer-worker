@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "signer-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-21",
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "SIGNER", "class_name": "Signer" }
+    ]
+  },
+
+  // SQLite is the only backend the Workers Free plan can provision for a
+  // new DO class (developers.cloudflare.com/durable-objects/platform/limits/,
+  // checked 2026-09-11). Never add a KV-backed migration here.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Signer"] }
+  ],
+
+  // No `vars` block, deliberately -- the Cloudflare deploy button prompts
+  // for every var declared here with no notion of "optional", so a clean
+  // deploy must declare none. OWNER_CREDS and BOUNCE_HOST are read
+  // defensively in code (src/env.d.ts) and added by hand in the dashboard
+  // if wanted. Same rule as bothy's wrangler.jsonc, which this file is
+  // copied from (github.com/sybenx/bothy, MIT).
+
+  // Static page. Assets are free and unmetered on Workers Free.
+  // run_worker_first so the Worker sees `/` before asset serving does.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  // Per-IP HTTP rate limit via Cloudflare's Rate Limiting binding, which
+  // runs in the runtime before the Worker's code and therefore before the
+  // Durable Object. One shared counter for every path that wakes the
+  // object: the WebSocket upgrade, /api/status, /api/claim, the pairing
+  // endpoints and the management POST. namespace_id is a positive integer
+  // unique within the account, not a provisioned resource; if another
+  // Worker in this account already uses 1101, change it. Read defensively
+  // (`env.RATE_LIMIT_API?.limit`): an absent binding means "allowed".
+  "ratelimits": [
+    { "name": "RATE_LIMIT_API", "namespace_id": "1101", "simple": { "limit": 60, "period": 60 } }
+  ],
+
+  // Workers Logs. Free plan: 200,000 logs/day, 3-day retention.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
