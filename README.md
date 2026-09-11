@@ -17,10 +17,22 @@ If you have already deployed, see "Keeping it updated" below for the one file th
 1. Click **Deploy to Cloudflare**. You'll be prompted to create a free Cloudflare account if you don't have one.
 2. On **Set up your application**, pick your GitHub account from the **Git account** dropdown. Cloudflare creates a repo there holding your copy. Leave **Create private Git repository** unchecked unless you have a reason; public repos get free GitHub Actions minutes, which the updater uses. Click **Deploy**.
 3. The build takes about 30 seconds. **Refresh the page** when it finishes. A **Visit** button appears at the top right; that's your Worker.
-4. Open that URL. It shows a QR code. In your FROSTR app, choose to send a share to another device and scan it. A five-digit code appears on this page; type it into the app. The page then names the group the share belongs to and asks you to confirm. This step is one-time and permanent; see "What it holds" below.
+4. Open that URL. It shows a QR code: that is [QR Secret Transfer](https://github.com/sybenx/nostr-key-management), the flow a share is meant to arrive by. An app scans it, a five-digit code appears on this page, you type that code into the app, and the page names the group the share belongs to and asks you to confirm. **No FROSTR app sends a share this way yet** — see "Getting the share in" for the two routes that work today. This step is one-time and permanent; see "What it holds" below.
 5. In the app, add this Worker's relay address to the group's relay list. The address is shown on the page under **Diagnostics**. Once a device has connected, the page says so.
 
 No dashboard configuration is required.
+
+## Getting the share in
+
+The QR on the page implements [QR Secret Transfer](https://github.com/sybenx/nostr-key-management): the share travels encrypted over public relays, the QR itself carries a throwaway address and nothing else, and the five-digit code is what stops someone who photographed the screen. That is the design, and this Worker's side of it is finished and tested.
+
+The sending side is not something any FROSTR app has. Igloo Mobile's scanner accepts a `bfgroup1...` or `bfshare1...` QR — a credential travelling *into* the app, the opposite direction — and no FROSTR repository implements a sender (checked 2026-09-11). Until one does, there is one way to get a real share in:
+
+**`OWNER_CREDS`.** Your app can show the group and share strings it holds. Put them, separated by a space, in a Worker **secret** named `OWNER_CREDS` (**Workers & Pages → your worker → Settings → Variables → Add → Encrypt**), and redeploy. The Worker holds that share from then on, the pairing page never opens, and the claim endpoint answers 404. This does mean the share passes through your clipboard and Cloudflare's dashboard, which is exactly what QR Secret Transfer exists to avoid — so do it from a machine you trust, and read "What it holds" first.
+
+`scripts/sender.mjs` is **not** a second route. It is a scripted Sender for trying the page end to end without a phone, and it generates a fresh throwaway group of its own rather than sending a share you already hold. Pointing it at a Worker you care about pairs that Worker, permanently, to a group that exists nowhere else. Use it against a Worker you are willing to delete.
+
+When an app does implement the sending side, step 4 above works exactly as written, with no change here.
 
 ## Keeping it updated
 
@@ -46,7 +58,7 @@ Once your other devices list this Worker's relay address, it takes part in signi
 
 The page shows how many of your other devices reached this share in the last hour and what the last signing request did. A device that has never reached it is the usual sign that the relay address has not been added on that device.
 
-Signing follows the FROSTR protocol as `@frostr/bifrost` 2.0 speaks it. Whether that is the format the Igloo apps will speak is an open question with the maintainers ([FROSTR-ORG/bifrost#12](https://github.com/FROSTR-ORG/bifrost/issues/12)); if the answer changes the format, the change here will be a new major version and this README will say so.
+Signing follows the FROSTR protocol as `@frostr/bifrost` 2.0.2 speaks it. **That is not what the current Igloo apps speak.** The 2026 apps — `igloo-pwa`, `igloo-chrome`, `igloo-home` — run [bifrost-rs](https://github.com/FROSTR-ORG/bifrost-rs) compiled to WebAssembly, by way of `igloo-shared`; none of them depends on the TypeScript bifrost, which has not moved since February 2026. The two share this Worker's event kind, its addressing and its encryption, and then disagree on the envelope inside, so a message from one decrypts cleanly at the other and fails to parse. Which format is canonical was asked in [FROSTR-ORG/bifrost#12](https://github.com/FROSTR-ORG/bifrost/issues/12) and has never been answered in the thread; the maintainers' own code answers it. Moving this Worker onto the bifrost-rs format is the next major version. Checked 2026-09-11.
 
 ## Connect an app
 
@@ -107,7 +119,7 @@ Not a relay for anything but its own group's traffic and its own bunker's; not a
 
 ## Attribution
 
-Conventions, the deploy and update flow, the rate-limit shape, the IP normaliser and the NIP-98 verifier come from [bothy](https://github.com/sybenx/bothy) (MIT). The FROST arithmetic is [@vbyte/frost](https://www.npmjs.com/package/@vbyte/frost), driven by a port of the protocol layer of [FROSTR-ORG/bifrost](https://github.com/FROSTR-ORG/bifrost) 2.0.2 (MIT, Christopher Scott), whose wire format this Worker speaks byte for byte; the transport is ported from [@vbyte/nostr-sdk](https://www.npmjs.com/package/@vbyte/nostr-sdk) 1.0.1 (MIT). The echo sent after pairing follows [FROSTR-ORG/igloo-core](https://github.com/FROSTR-ORG/igloo-core). The pairing flow implements the QR Secret Transfer specification in [sybenx/nostr-key-management](https://github.com/sybenx/nostr-key-management). QR codes are drawn by [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT). Which of bifrost's wire formats is the one to build against is an open question, [FROSTR-ORG/bifrost#12](https://github.com/FROSTR-ORG/bifrost/issues/12).
+Conventions, the deploy and update flow, the rate-limit shape, the IP normaliser and the NIP-98 verifier come from [bothy](https://github.com/sybenx/bothy) (MIT). The FROST arithmetic is [@vbyte/frost](https://www.npmjs.com/package/@vbyte/frost), driven by a port of the protocol layer of [FROSTR-ORG/bifrost](https://github.com/FROSTR-ORG/bifrost) 2.0.2 (MIT, Christopher Scott), whose wire format this Worker speaks byte for byte; the transport is ported from [@vbyte/nostr-sdk](https://www.npmjs.com/package/@vbyte/nostr-sdk) 1.0.1 (MIT). The echo sent after pairing follows [FROSTR-ORG/igloo-core](https://github.com/FROSTR-ORG/igloo-core). The pairing flow implements the QR Secret Transfer specification in [sybenx/nostr-key-management](https://github.com/sybenx/nostr-key-management). QR codes are drawn by [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT). Which of bifrost's wire formats is the one to build against was asked in [FROSTR-ORG/bifrost#12](https://github.com/FROSTR-ORG/bifrost/issues/12) and answered by the maintainers' own code rather than the thread; see "Signing".
 
 ## Development
 

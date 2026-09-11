@@ -191,17 +191,96 @@ interoperate. This Worker implements the one in `@frostr/bifrost` 2.0.2
 | `bifrost-rs` | `BridgeEnvelope {request_id, sent_at, payload}`, kind 20000 | NIP-44 v2 | derivation codes |
 
 `igloo-core` 0.2.4 and `igloo-server` pin `@frostr/bifrost` `^1.0.6` /
-`^1.0.7`, so the deployed Igloo apps speak the 1.x format today, and
-bifrost's own MIGRATION.md says "all peers must upgrade together".
-`bifrost-rs`'s README says it maintains "no legacy compatibility layer".
-The question of which stack is canonical was put to the maintainers as
-an issue on FROSTR-ORG/bifrost; the link and the answer are recorded at
-the end of this file. Until it is answered, the 2.x format is the
-decision, because it is what the reference library ships and its
-protocol document is the one this design was drawn from.
+`^1.0.7`, so those apps speak the 1.x format, and bifrost's own
+MIGRATION.md says "all peers must upgrade together". `bifrost-rs`'s
+README says it maintains "no legacy compatibility layer". The question
+of which stack is canonical was put to the maintainers as an issue on
+FROSTR-ORG/bifrost. The thread has never been answered. Their code
+has.
+
+### The answer, read off the shipping apps (2026-09-11)
+
+FROSTR-ORG pushed eight repositories on 2026-07-05 under the name
+FROSTR V2: `igloo-pwa` 0.2.0, `igloo-chrome` 0.3.0, `igloo-home` 0.2.0,
+`igloo-shell`, `igloo-shared` 0.1.0, `igloo-ui`, `igloo-paper`,
+`frostr-infra`. **None of them depends on `@frostr/bifrost`.** Their
+dependency lists are `igloo-shared` plus `nostr-tools`; the protocol
+itself lives in `igloo-shared`, which ships
+`public/wasm/bifrost_bridge_wasm_bg.wasm` and
+`bifrost_profile_wasm_bg.wasm` -- the `bifrost-bridge-wasm` and
+`bifrost-profile-wasm` crates of `bifrost-rs`, compiled. The TypeScript
+bifrost this Worker ports from has not moved since 2026-02-16.
+
+So the canonical format for anything shipping today is `bifrost-rs`'s,
+and this Worker does not speak it. The 2.x decision above was right on
+the evidence available when it was made and is wrong now.
+
+### Measured, not read
+
+`bifrost_bridge_wasm` exposes a whole signer node (`WasmBridgeRuntime`)
+that consumes inbound events and emits outbound ones without a network
+of its own, so the shipping implementation can be driven directly as a
+counterparty. `scripts/interop.mjs` does that and prints the deltas
+below; every line of this is what the WASM did, not what its source
+appears to say. Re-run it before trusting any of it.
+
+What already interoperates, unchanged:
+
+- kind 20000, `p`-tagged to the recipient's x-only share pubkey;
+- NIP-44 v2 over the raw ECDH x-coordinate with the `nip44-v2` HKDF
+  salt. This Worker's `nip44Decrypt` reads a real `bifrost-rs` message
+  on the first attempt, and its decoder already accepts either base64
+  alphabet.
+
+What does not:
+
+| | this Worker (bifrost 2.0.2) | bifrost-rs |
+|---|---|---|
+| base64 on encode | base64url, unpadded | `STANDARD_NO_PAD` |
+| envelope | `{type:"request", id, method, params[], peers[], version}` | `{request_id, sent_at, payload:{type, data}}` |
+| payload | JSON strings in `params` | a typed object; `type` is the PascalCase variant (`PingRequest`, `SignRequest`, ...) |
+| `group_pk` | 33-byte compressed | 32-byte x-only |
+| group package | no name field | carries `group_name` |
+| integers in identifiers | big-endian | little-endian |
+| session `type` | `type` | `kind` |
+| nonce commitments | one per member | one per (member, sighash), carrying `hash_index` |
+| ping | carries nothing | advertises the sender's nonces and its policy profile |
+
+The group id is the clearest single case, because both sides hash the
+same thing in the same order -- `sha256(group_pk || threshold[4] ||
+member pubkeys sorted by idx)` -- and still disagree. Substituting the
+x-only key and a little-endian threshold reproduces the WASM's answer
+exactly, which is what `scripts/interop.mjs` asserts in passing. Two
+byte-level choices, and every session id underneath them moves.
+
+### What the port costs
+
+Not the arithmetic: both sides run FROST over secp256k1 with taproot
+tweaking, and `src/frost.ts` keeps its shape. The cost is in three
+places, and the third is the one that reaches this document:
+
+1. `src/wire.ts` and `src/schema.ts`: the envelope, the nine payload
+   variants, the encode-side base64.
+2. `src/frost.ts` and `src/signer.ts`: the identifier byte layouts, the
+   field renames, `hash_index` on every nonce commitment, and a ping
+   that advertises.
+3. `src/pool.ts`, and the arithmetic above in this file. This Worker
+   stores a 32-byte code per nonce and re-derives the secret with
+   HMAC-SHA256 at signing time, which is the whole reason the pool is
+   affordable against a 100,000-row day. `bifrost-rs` holds
+   `frost::round1::SigningNonces` in its pool and treats the code as an
+   identifier rather than a seed. Peers only ever see the public
+   points, so the derivation trick can survive -- but one commitment
+   per (member, sighash) instead of one per member changes what a
+   signature costs in rows, and every figure in "Nonce pool" has to be
+   recomputed before `MAX_NONCE_ROWS_PER_DAY`'s default means anything
+   again.
+
+That is a major version, and it is larger than a transport change.
 
 ### Issue
 
 - Opened 2026-09-11: https://github.com/FROSTR-ORG/bifrost/issues/12
-- Answer: not yet received. When it arrives, record it here and, if it
-  changes the format, the change is a major version of this Worker.
+- Answer in the thread: none, as of 2026-09-11. If one ever arrives and
+  contradicts what the shipping code does, the code wins and this
+  section says why.
