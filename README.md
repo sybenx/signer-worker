@@ -2,9 +2,9 @@
 
 [![Release](https://img.shields.io/github/v/tag/sybenx/signer-worker?style=for-the-badge)](../../tags)
 
-One share of your FROSTR key, held by a Cloudflare Worker on the free tier, deployed in one click.
+A Cloudflare Worker that holds one share of a FROSTR key and signs together with the group's other devices. It runs inside the free tier, in the deployer's own Cloudflare account.
 
-FROSTR splits a nostr key into shares. Any two of three (or whatever threshold you chose) sign together; one share signs nothing alone. Most people keep their shares on a phone and a laptop, and the third somewhere that is always on. This is the somewhere: a Worker in your own Cloudflare account, with nothing to run at home and no server to rent.
+FROSTR splits a Nostr key into shares with a signing threshold (2 of 3, for example). One share signs nothing alone. This Worker is meant to hold the share that is always online.
 
 **Requires a Cloudflare account** (free, no card) **and a GitHub account** (also free). Cloudflare puts a copy of the code in your Git account and deploys from there.
 
